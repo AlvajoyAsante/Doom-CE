@@ -484,6 +484,14 @@ void fps(void) {
     }
 
     delta = (double)(current_time - lastFrameTime) / frame_ticks;
+
+    // A very slow frame would otherwise be compensated by moving and turning
+    // a huge amount in one step: at 3 fps that is a 34 degree turn, and a
+    // move of a whole cell, which can step straight over a wall because
+    // collisions are only tested at the destination. Capping trades exact
+    // real-time pacing for control.
+    if (delta > FRAME_DELTA_MAX) delta = FRAME_DELTA_MAX;
+
     lastFrameTime = current_time;
 }
 
@@ -733,6 +741,7 @@ void loopGamePlay(void) {
     bool gun_fired = false;
     uint8_t gun_pos = 0;
     double rot_speed;
+    double rot_velocity = 0;
     double old_dir_x;
     double old_plane_x;
     double view_height = 0;
@@ -769,17 +778,30 @@ void loopGamePlay(void) {
                 jogging = fabs(player.velocity) * MOV_SPEED_INV;
             }
 
-            // Player rotation
+            // Player rotation.
+            //
+            // The original turns a flat ROT_SPEED * delta every frame, which
+            // makes the reachable headings a multiple of that step: at 5 fps
+            // that is 20 degrees, so there are only 17 directions you can
+            // face and aiming at anything is luck. Ramping the turn rate the
+            // same way the walk speed ramps means a tap rotates a fraction of
+            // a step, while holding the key still reaches the original speed.
             if (input_right()) {
-                rot_speed = ROT_SPEED * delta;
-                old_dir_x = player.dir.x;
-                player.dir.x = player.dir.x * cos(-rot_speed) - player.dir.y * sin(-rot_speed);
-                player.dir.y = old_dir_x * sin(-rot_speed) + player.dir.y * cos(-rot_speed);
-                old_plane_x = player.plane.x;
-                player.plane.x = player.plane.x * cos(-rot_speed) - player.plane.y * sin(-rot_speed);
-                player.plane.y = old_plane_x * sin(-rot_speed) + player.plane.y * cos(-rot_speed);
+                rot_velocity += (-ROT_SPEED - rot_velocity) * ROT_ACCEL;
             } else if (input_left()) {
-                rot_speed = ROT_SPEED * delta;
+                rot_velocity += (ROT_SPEED - rot_velocity) * ROT_ACCEL;
+            } else {
+                // Stop dead rather than gliding. A decay here would add
+                // roughly another frame's worth of turn after the key is
+                // released, which is exactly the overshoot that makes lining
+                // up a shot hard.
+                rot_velocity = 0;
+            }
+
+            if (fabs(rot_velocity) < 0.0005) {
+                rot_velocity = 0;
+            } else {
+                rot_speed = rot_velocity * delta;
                 old_dir_x = player.dir.x;
                 player.dir.x = player.dir.x * cos(rot_speed) - player.dir.y * sin(rot_speed);
                 player.dir.y = old_dir_x * sin(rot_speed) + player.dir.y * cos(rot_speed);

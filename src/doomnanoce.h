@@ -105,6 +105,11 @@
 #define GUN_TARGET_POS        18
 #define GUN_SHOT_POS          (GUN_TARGET_POS + 4)
 #define ROT_SPEED             .12
+#define ROT_ACCEL             .3          // How fast turning ramps up to ROT_SPEED.
+                                          // A tap turns a fraction of a full step,
+                                          // which is what makes fine aiming possible
+                                          // when the frame rate is low.
+#define FRAME_DELTA_MAX       2.0         // Upper bound on the frame time multiplier
 #define MOV_SPEED             .2
 #define MOV_SPEED_INV         5           // 1 / MOV_SPEED
 #define JOGGING_SPEED         .005
