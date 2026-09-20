@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/title_image.png" alt="Doom Nano CE" width="50%">
+  <img src="docs/title_image.png" alt="Doom Nano CE" width="30%">
 </div>
 
 # Doom Nano CE
