@@ -23,11 +23,12 @@ extern "C" {
 // Display configuration
 #define DISPLAY_WIDTH 320
 #define DISPLAY_HEIGHT 240
-#define DISPLAY_BPP 1
-#define DISPLAY_BUFFER_SIZE (DISPLAY_WIDTH * DISPLAY_HEIGHT / 8)
+#define DISPLAY_BPP 8                 // graphx runs the LCD in 8bpp palletized mode
+#define DISPLAY_BUFFER_SIZE (DISPLAY_WIDTH * DISPLAY_HEIGHT * DISPLAY_BPP / 8)
 
 // Game configuration
-#define MAX_ENTITIES 100
+// NOTE: MAX_ENTITIES / MAX_STATIC_ENTITIES live in doomnanoce.h, they are part of
+// the game logic rather than the build configuration.
 #define MAX_SPRITES 50
 #define MAX_TEXTURES 20
 

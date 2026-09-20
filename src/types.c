@@ -16,12 +16,11 @@ Coords create_coords(double x, double y) {
 uint8_t coords_distance(Coords* a, Coords* b) {
     double dx = a->x - b->x;
     double dy = a->y - b->y;
-    double distance = sqrt(dx*dx + dy*dy);
-    
-    // Scale and clamp the result to fit in uint8_t
-    uint8_t result = (uint8_t)(distance * DISTANCE_MULTIPLIER);
-    if (result > 255) result = 255;
-    return result;
+    double distance = sqrt(dx*dx + dy*dy) * DISTANCE_MULTIPLIER;
+
+    // Clamp before the cast, otherwise the value wraps instead of saturating
+    if (distance > 255.0) distance = 255.0;
+    return (uint8_t)distance;
 }
 
 /**

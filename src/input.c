@@ -1,58 +1,41 @@
 #include "doomnanoce.h"
 
+// Ported from docs/doom-nano/input.cpp. The original polls each button
+// separately so several can be held at once; kb_Data gives us the whole
+// keypad in one scan, so the game loop scans once per frame and then asks
+// these predicates as often as it likes.
+
 /**
- * Initialize input handling
+ * Read the keypad. Call once per frame, before the input_* predicates.
  */
 void input_setup(void) {
-    keypad_Init();
+    kb_Scan();
+}
+
+bool input_up(void) {
+    return kb_IsDown(K_UP) != 0;
+}
+
+bool input_down(void) {
+    return kb_IsDown(K_DOWN) != 0;
+}
+
+bool input_left(void) {
+    return kb_IsDown(K_LEFT) != 0;
+}
+
+bool input_right(void) {
+    return kb_IsDown(K_RIGHT) != 0;
+}
+
+bool input_fire(void) {
+    return kb_IsDown(K_FIRE) != 0;
 }
 
 /**
- * Handle game input from TI-84+CE keypad
+ * Not in the original, which runs until the calculator is switched off.
+ * [clear] leaves the program and hands the calculator back to the OS.
  */
-void handleInput(void) {
-    // Get pressed keys
-    kb_key_t key = kb_GetKey();
-    
-    switch(key) {
-        case K_UP:
-            player.pos.x += player.dir.x * PLAYER_SPEED;
-            player.pos.y += player.dir.y * PLAYER_SPEED;
-            break;
-        case K_DOWN:
-            player.pos.x -= player.dir.x * PLAYER_SPEED;
-            player.pos.y -= player.dir.y * PLAYER_SPEED;
-            break;
-        case K_LEFT:
-            // Rotate left
-            {
-                double temp_x = player.dir.x * cos(ROT_SPEED) - player.dir.y * sin(ROT_SPEED);
-                double temp_y = player.dir.x * sin(ROT_SPEED) + player.dir.y * cos(ROT_SPEED);
-                player.dir.x = temp_x;
-                player.dir.y = temp_y;
-                
-                temp_x = player.plane.x * cos(ROT_SPEED) - player.plane.y * sin(ROT_SPEED);
-                temp_y = player.plane.x * sin(ROT_SPEED) + player.plane.y * cos(ROT_SPEED);
-                player.plane.x = temp_x;
-                player.plane.y = temp_y;
-            }
-            break;
-        case K_RIGHT:
-            // Rotate right
-            {
-                double temp_x = player.dir.x * cos(-ROT_SPEED) - player.dir.y * sin(-ROT_SPEED);
-                double temp_y = player.dir.x * sin(-ROT_SPEED) + player.dir.y * cos(-ROT_SPEED);
-                player.dir.x = temp_x;
-                player.dir.y = temp_y;
-                
-                temp_x = player.plane.x * cos(-ROT_SPEED) - player.plane.y * sin(-ROT_SPEED);
-                temp_y = player.plane.x * sin(-ROT_SPEED) + player.plane.y * cos(-ROT_SPEED);
-                player.plane.x = temp_x;
-                player.plane.y = temp_y;
-            }
-            break;
-        case K_FIRE:
-            fire();
-            break;
-    }
+bool input_quit(void) {
+    return kb_IsDown(K_QUIT) != 0;
 }

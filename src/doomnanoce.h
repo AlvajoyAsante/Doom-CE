@@ -14,20 +14,46 @@
 // TI-84+CE specific libraries
 #include <graphx.h>
 #include <keypadc.h>
+#include <stdbool.h>
+#include <time.h>
 #include <sys/timers.h>
 
-// Game constants
-#define SCREEN_WIDTH 320
-#define SCREEN_HEIGHT 240
-#define MAX_ENTITIES 32
-#define MAX_STATIC_ENTITIES 16
+// Build/hardware configuration (DISPLAY_WIDTH, DISPLAY_HEIGHT, ...)
+#include "config.h"
 
-// Key definitions for TI-84+CE
-#define K_UP KEY_2ND
-#define K_DOWN KEY_DEL
-#define K_LEFT KEY_LEFT
-#define K_RIGHT KEY_RIGHT
-#define K_FIRE KEY_ENTER
+// Game constants
+#define SCREEN_WIDTH  DISPLAY_WIDTH
+#define SCREEN_HEIGHT DISPLAY_HEIGHT
+#define HALF_WIDTH    (SCREEN_WIDTH / 2)
+#define HALF_HEIGHT   (SCREEN_HEIGHT / 2)
+#define RENDER_HEIGHT 200                 // raycaster viewport height (the rest is the hud)
+#define MAX_ENTITIES 10
+#define MAX_STATIC_ENTITIES 28
+
+// The original targets a 128x64 display with a 56px tall viewport. The
+// raycaster magnifies that onto this screen, so sprites and hud elements have
+// to be magnified by the same factors to line up with the walls.
+#define VIEW_SCALE_X  (SCREEN_WIDTH / 128.0)
+#define VIEW_SCALE_Y  (RENDER_HEIGHT / 56.0)
+#define TEXT_SCALE    2                   // the 4x6 font is drawn at 8x12
+#define GUN_SCALE     3
+
+// Key definitions for TI-84+CE (kb_lkey_t values, use with kb_IsDown)
+#define K_UP    kb_KeyUp
+#define K_DOWN  kb_KeyDown
+#define K_LEFT  kb_KeyLeft
+#define K_RIGHT kb_KeyRight
+#define K_FIRE  kb_Key2nd
+#define K_QUIT  kb_KeyClear
+
+// Helpers. The original Arduino sketch relies on the min()/max() macros the
+// Arduino core provides; the CE toolchain has no equivalent.
+#ifndef min
+#define min(a, b) ((a) < (b) ? (a) : (b))
+#endif
+#ifndef max
+#define max(a, b) ((a) > (b) ? (a) : (b))
+#endif
 
 // Game states
 #define INTRO 0
@@ -77,21 +103,28 @@
 
 // Weapon and game parameters
 #define GUN_TARGET_POS        18
-#define GUN_SHOT_POS          GUN_TARGET_POS + 4
+#define GUN_SHOT_POS          (GUN_TARGET_POS + 4)
 #define ROT_SPEED             .12
-#define PLAYER_SPEED          0.05
-#define ENEMY_SPEED           0.03
-#define FIREBALL_SPEED        0.08
+#define MOV_SPEED             .2
+#define MOV_SPEED_INV         5           // 1 / MOV_SPEED
+#define JOGGING_SPEED         .005
+#define ENEMY_SPEED           .02
+#define FIREBALL_SPEED        .2
+#define FIREBALL_ANGLES       45          // Num of angles per PI
+#define FADE_STEPS            16          // Frames in the fade in/out effect
 
-// Collision and damage parameters
-#define ENEMY_COLLIDER_DIST   10
-#define ITEM_COLLIDER_DIST    15
-#define ENEMY_MELEE_DIST      20
-#define MAX_ENEMY_VIEW        100
-#define ENEMY_MELEE_DAMAGE    20
-#define ENEMY_FIREBALL_DAMAGE 30
-#define GUN_MAX_DAMAGE        50
-#define MAX_ENTITY_DISTANCE   100
+// Collision and damage parameters (distances are * DISTANCE_MULTIPLIER).
+// Values match docs/doom-nano/constants.h.
+#define MAX_ENTITY_DISTANCE    200
+#define MAX_ENEMY_VIEW         80
+#define ITEM_COLLIDER_DIST     6
+#define ENEMY_COLLIDER_DIST    4
+#define FIREBALL_COLLIDER_DIST 2
+#define ENEMY_MELEE_DIST       6
+#define WALL_COLLIDER_DIST     .2
+#define ENEMY_MELEE_DAMAGE     8
+#define ENEMY_FIREBALL_DAMAGE  20
+#define GUN_MAX_DAMAGE         15
 
 // Game structures and types
 typedef uint16_t UID;
@@ -131,6 +164,19 @@ typedef struct {
     bool active;
 } StaticEntity;
 
+// Shared game state (defined in main.c)
+extern Player player;
+extern Entity entity[MAX_ENTITIES];
+extern StaticEntity static_entity[MAX_STATIC_ENTITIES];
+extern uint8_t num_entities;
+extern uint8_t num_static_entities;
+extern uint8_t scene;
+extern bool exit_scene;
+extern bool quit_game;
+extern uint8_t flash_screen;
+extern double delta;
+extern uint8_t zbuffer[ZBUFFER_SIZE];
+
 // Function prototypes
 void setup(void);
 void loop(void);
@@ -149,15 +195,40 @@ void updateEntities(const uint8_t level[]);
 void renderMap(const uint8_t level[], double view_height);
 void fps(void);
 double getActualFps(void);
-void drawPixel(int8_t x, int8_t y, bool color, bool raycasterViewport);
-void drawVLine(uint8_t x, int8_t start_y, int8_t end_y, uint8_t intensity);
-void drawSprite(int8_t x, int8_t y, const uint8_t bitmap[], const uint8_t mask[], int16_t w, int16_t h, uint8_t sprite, double distance);
-void drawText(int8_t x, int8_t y, char *txt, uint8_t space);
+void setupDisplay(void);
+void drawPixel(int x, int y, bool color, bool raycasterViewport);
+void drawVLine(int x, int start_y, int end_y, uint8_t intensity);
+void drawColumn(int x, int start_y, int end_y, uint8_t intensity);
+void drawSprite(int x, int y, const uint8_t bitmap[], const uint8_t mask[], int16_t w, int16_t h, uint8_t sprite, double distance);
+void drawBitmap(int x, int y, const uint8_t bitmap[], int16_t w, int16_t h, uint8_t scale, bool color);
+void drawChar(int x, int y, char ch);
+void drawText(int x, int y, const char *txt, uint8_t space);
+void drawTextNum(int x, int y, uint8_t num);
+void clearRect(int x, int y, int w, int h);
+void setFade(uint8_t level);
+void setInvert(bool invert);
+void renderEntities(double view_height);
+void renderGun(uint8_t gun_pos, double amount_jogging);
+void renderHud(void);
+void renderStats(void);
 void updateHud(void);
-void handleInput(void);
+void sortEntities(void);
+void jumpTo(uint8_t target_scene);
+void loopIntro(void);
+void loopGamePlay(void);
+void input_setup(void);
+bool input_up(void);
+bool input_down(void);
+bool input_left(void);
+bool input_right(void);
+bool input_fire(void);
+bool input_quit(void);
 Coords translateIntoView(Coords* pos);
-double coords_distance(Coords* a, Coords* b);
+Coords create_coords(double x, double y);
+uint8_t coords_distance(Coords* a, Coords* b);
 UID create_uid(EType type, uint8_t x, uint8_t y);
 EType uid_get_type(UID uid);
+Entity create_entity(uint8_t type, uint8_t x, uint8_t y, uint8_t initialState, uint8_t initialHealth);
+StaticEntity create_static_entity(UID uid, uint8_t x, uint8_t y, bool active);
 
 #endif // _DOOMNANOCE_H

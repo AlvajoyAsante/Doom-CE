@@ -1,9 +1,11 @@
 #include "doomnanoce.h"
 #include "level.h"
+#include "sprites.h"
 
 // Global game state variables
 uint8_t scene = INTRO;
 bool exit_scene = false;
+bool quit_game = false;
 bool invert_screen = false;
 uint8_t flash_screen = 0;
 
@@ -16,53 +18,60 @@ uint8_t num_static_entities = 0;
 
 // Timing variables
 double delta = 1;
-uint32_t lastFrameTime = 0;
+clock_t lastFrameTime = 0;
 
 // Z-buffer for depth sorting
 uint8_t zbuffer[ZBUFFER_SIZE];
-
-// Game level data (will be initialized from level.h)
-extern const uint8_t level_data[];
 
 /**
  * Initialize the game system
  */
 void setup(void) {
-    // Initialize graphics
-    gfx_Begin();
-    gfx_SetDrawBuffer();
-    
-    // Initialize input handling
-    keypad_Init();
-    
+    setupDisplay();
+    input_setup();
+
     // Initialize z buffer
     memset(zbuffer, 0xFF, ZBUFFER_SIZE);
-    
-    // Initialize level
-    initializeLevel(level_data);
+
+    lastFrameTime = clock();
 }
 
 /**
- * Main game loop
+ * Jump to another scene
+ */
+void jumpTo(uint8_t target_scene) {
+    scene = target_scene;
+    exit_scene = true;
+}
+
+/**
+ * Milliseconds since the program started. Stands in for Arduino's millis().
+ */
+uint32_t millis(void) {
+    // Divide first: clock() * 1000 overflows 32 bits after about two minutes
+    return (uint32_t)(clock() / (CLOCKS_PER_SEC / 1000));
+}
+
+/**
+ * Run the active scene, then fade out and hand back to main().
  */
 void loop(void) {
-    // Main game loop
-    while (1) {
-        // Handle input
-        handleInput();
-        
-        // Update entities
-        updateEntities(level_data);
-        
-        // Render the scene
-        renderMap(level_data, 0.5);
-        
-        // Update HUD
-        updateHud();
-        
-        // Frame rate control
-        fps();
+    switch (scene) {
+        case INTRO:
+            loopIntro();
+            break;
+        case GAME_PLAY:
+            loopGamePlay();
+            break;
     }
+
+    // fade out effect
+    for (uint8_t i = 0; i < FADE_STEPS; i++) {
+        setFade(255 - 255 * i / (FADE_STEPS - 1));
+        delay(40);
+    }
+
+    exit_scene = false;
 }
 
 /**
@@ -70,8 +79,8 @@ void loop(void) {
  */
 void initializeLevel(const uint8_t level[]) {
     // Find player spawn position
-    for (uint8_t y = LEVEL_HEIGHT - 1; y >= 0; y--) {
-        for (uint8_t x = 0; x < LEVEL_WIDTH; x++) {
+    for (int y = LEVEL_HEIGHT - 1; y >= 0; y--) {
+        for (int x = 0; x < LEVEL_WIDTH; x++) {
             uint8_t block = getBlockAt(level, x, y);
 
             if (block == E_PLAYER) {
@@ -88,34 +97,6 @@ void initializeLevel(const uint8_t level[]) {
             }
         }
     }
-}
-
-/**
- * Get a block from the level at specified coordinates
- */
-uint8_t getBlockAt(const uint8_t level[], uint8_t x, uint8_t y) {
-    if (x < 0 || x >= LEVEL_WIDTH || y < 0 || y >= LEVEL_HEIGHT) {
-        return E_FLOOR;
-    }
-
-    // Simple implementation - in a real version this would decode
-    // the actual level data properly
-    if (x == 0 || x == LEVEL_WIDTH-1 || y == 0 || y == LEVEL_HEIGHT-1) {
-        return E_WALL; // Border walls
-    }
-    
-    // Simple maze pattern - for demo purposes
-    if ((x > 10 && x < 20 && y > 5 && y < 15) || 
-        (x > 30 && x < 40 && y > 15 && y < 25)) {
-        return E_WALL;
-    }
-    
-    // Player spawn position
-    if (x == 20 && y == 10) {
-        return E_PLAYER;
-    }
-    
-    return E_FLOOR; // Default to floor
 }
 
 /**
@@ -195,20 +176,20 @@ void spawnFireball(double x, double y) {
         return;
     }
 
-    UID uid = create_uid(E_FIREBALL, x, y);
-    
+    UID uid = create_uid(E_FIREBALL, (uint8_t)x, (uint8_t)y);
+
     // Remove if already exists, don't throw anything. Not the best, but shouldn't happen too often
     if (isSpawned(uid)) return;
 
-    // Calculate direction - simplified for CE port
-    double angle = atan2(y - player.pos.y, x - player.pos.x);
-    int16_t dir = (int16_t)(angle / M_PI * 16 + 32) % 32;  // Simplified 32-angle system
-    
+    // Calculate direction. FIREBALL_ANGLES angles per PI
+    int16_t dir = FIREBALL_ANGLES + (int16_t)(atan2(y - player.pos.y, x - player.pos.x) / M_PI * FIREBALL_ANGLES);
+    if (dir < 0) dir += FIREBALL_ANGLES * 2;
+
     entity[num_entities] = (Entity) {
         .uid = uid,
         .pos = {x, y},
         .state = S_STAND,
-        .health = dir,  // Use health to store angle
+        .health = (uint8_t)dir,  // Use health to store angle
         .distance = 0,
         .timer = 0
     };
@@ -225,6 +206,15 @@ void removeEntity(UID uid, bool makeStatic) {
     while (i < num_entities) {
         if (!found && entity[i].uid == uid) {
             found = true;
+
+            // Park the entity in the sleeping list so it can be respawned
+            // when the player comes back into range.
+            if (makeStatic && num_static_entities < MAX_STATIC_ENTITIES && !isStatic(uid)) {
+                static_entity[num_static_entities] = create_static_entity(
+                    uid, (uint8_t)entity[i].pos.x, (uint8_t)entity[i].pos.y, true);
+                num_static_entities++;
+            }
+
             num_entities--;
         }
 
@@ -313,8 +303,8 @@ void fire(void) {
         }
 
         Coords transform = translateIntoView(&(entity[i].pos));
-        if (abs(transform.x) < 20 && transform.y > 0) {
-            uint8_t damage = (uint8_t) min(GUN_MAX_DAMAGE, GUN_MAX_DAMAGE / (abs(transform.x) * entity[i].distance) / 5);
+        if (fabs(transform.x) < 20 && transform.y > 0) {
+            uint8_t damage = (uint8_t) min(GUN_MAX_DAMAGE, GUN_MAX_DAMAGE / (fabs(transform.x) * entity[i].distance) / 5);
             if (damage > 0) {
                 entity[i].health = max(0, entity[i].health - damage);
                 entity[i].state = S_HIT;
@@ -351,7 +341,7 @@ void updateEntities(const uint8_t level[]) {
 
         // too far away. put it in doze mode
         if (entity[i].distance > MAX_ENTITY_DISTANCE) {
-            removeEntity(entity[i].uid, false);
+            removeEntity(entity[i].uid, true);
             // don't increase 'i', since current one has been removed
             continue;
         }
@@ -441,8 +431,8 @@ void updateEntities(const uint8_t level[]) {
                     UID collided = updatePosition(
                         level,
                         &(entity[i].pos),
-                        cos((double) entity[i].health / 32 * M_PI) * FIREBALL_SPEED,
-                        sin((double) entity[i].health / 32 * M_PI) * FIREBALL_SPEED,
+                        cos((double) entity[i].health / FIREBALL_ANGLES * M_PI) * FIREBALL_SPEED,
+                        sin((double) entity[i].health / FIREBALL_ANGLES * M_PI) * FIREBALL_SPEED,
                         true
                     );
 
@@ -485,9 +475,15 @@ void updateEntities(const uint8_t level[]) {
  * Frame rate control and timing
  */
 void fps(void) {
-    uint32_t current_time = timer_Check();
-    while ((current_time - lastFrameTime) < FRAME_TIME);
-    delta = (double)(current_time - lastFrameTime) / FRAME_TIME;
+    // clock() ticks at CLOCKS_PER_SEC (32768 Hz on the CE)
+    const clock_t frame_ticks = (clock_t)(FRAME_TIME * CLOCKS_PER_SEC / 1000);
+
+    clock_t current_time = clock();
+    while ((current_time - lastFrameTime) < frame_ticks) {
+        current_time = clock();
+    }
+
+    delta = (double)(current_time - lastFrameTime) / frame_ticks;
     lastFrameTime = current_time;
 }
 
@@ -499,116 +495,391 @@ double getActualFps(void) {
 }
 
 /**
- * Handle input from the TI-84+CE keypad
- */
-void handleInput(void) {
-    // Get pressed keys
-    kb_key_t key = kb_GetKey();
-    
-    switch(key) {
-        case K_UP:
-            player.pos.x += player.dir.x * PLAYER_SPEED;
-            player.pos.y += player.dir.y * PLAYER_SPEED;
-            break;
-        case K_DOWN:
-            player.pos.x -= player.dir.x * PLAYER_SPEED;
-            player.pos.y -= player.dir.y * PLAYER_SPEED;
-            break;
-        case K_LEFT:
-            // Rotate left
-            {
-                double temp_x = player.dir.x * cos(ROT_SPEED) - player.dir.y * sin(ROT_SPEED);
-                double temp_y = player.dir.x * sin(ROT_SPEED) + player.dir.y * cos(ROT_SPEED);
-                player.dir.x = temp_x;
-                player.dir.y = temp_y;
-                
-                temp_x = player.plane.x * cos(ROT_SPEED) - player.plane.y * sin(ROT_SPEED);
-                temp_y = player.plane.x * sin(ROT_SPEED) + player.plane.y * cos(ROT_SPEED);
-                player.plane.x = temp_x;
-                player.plane.y = temp_y;
-            }
-            break;
-        case K_RIGHT:
-            // Rotate right
-            {
-                double temp_x = player.dir.x * cos(-ROT_SPEED) - player.dir.y * sin(-ROT_SPEED);
-                double temp_y = player.dir.x * sin(-ROT_SPEED) + player.dir.y * cos(-ROT_SPEED);
-                player.dir.x = temp_x;
-                player.dir.y = temp_y;
-                
-                temp_x = player.plane.x * cos(-ROT_SPEED) - player.plane.y * sin(-ROT_SPEED);
-                temp_y = player.plane.x * sin(-ROT_SPEED) + player.plane.y * cos(-ROT_SPEED);
-                player.plane.x = temp_x;
-                player.plane.y = temp_y;
-            }
-            break;
-        case K_FIRE:
-            fire();
-            break;
-    }
-}
-
-/**
- * Translate a position into view coordinates
+ * Translate a world position into camera space.
+ * transform.y is depth into the screen, transform.x the lateral offset.
  */
 Coords translateIntoView(Coords* pos) {
-    Coords result;
-    result.x = (pos->x - player.pos.x) * player.plane.x + (pos->y - player.pos.y) * player.plane.y;
-    result.y = (pos->x - player.pos.x) * player.dir.x + (pos->y - player.pos.y) * player.dir.y;
+    // translate sprite position to relative to camera
+    double sprite_x = pos->x - player.pos.x;
+    double sprite_y = pos->y - player.pos.y;
+
+    // required for correct matrix multiplication
+    double inv_det = 1.0 / (player.plane.x * player.dir.y - player.dir.x * player.plane.y);
+    double transform_x = inv_det * (player.dir.y * sprite_x - player.dir.x * sprite_y);
+    double transform_y = inv_det * (-player.plane.y * sprite_x + player.plane.x * sprite_y);
+
+    Coords result = { transform_x, transform_y };
     return result;
 }
 
 /**
- * Calculate distance between two coordinates
+ * Sort entities far to close so nearer sprites overdraw further ones.
+ * Comb sort, as in the original.
  */
-double coords_distance(Coords* a, Coords* b) {
-    double dx = a->x - b->x;
-    double dy = a->y - b->y;
-    return sqrt(dx*dx + dy*dy);
+void sortEntities(void) {
+    uint8_t gap = num_entities;
+    bool swapped = false;
+
+    while (gap > 1 || swapped) {
+        // shrink factor 1.3
+        gap = (gap * 10) / 13;
+        if (gap == 9 || gap == 10) gap = 11;
+        if (gap < 1) gap = 1;
+        swapped = false;
+
+        for (uint8_t i = 0; i + gap < num_entities; i++) {
+            uint8_t j = i + gap;
+            if (entity[i].distance < entity[j].distance) {
+                Entity tmp = entity[i];
+                entity[i] = entity[j];
+                entity[j] = tmp;
+                swapped = true;
+            }
+        }
+    }
 }
 
 /**
- * Create a unique identifier for entities
+ * Draw every visible entity as a billboard sprite.
+ * Ported from renderEntities() in docs/doom-nano/doom-nano.ino.
  */
-UID create_uid(EType type, uint8_t x, uint8_t y) {
-    return (type << 12) | ((uint16_t)x << 6) | y;
+void renderEntities(double view_height) {
+    sortEntities();
+
+    for (uint8_t i = 0; i < num_entities; i++) {
+        if (entity[i].state == S_HIDDEN) continue;
+
+        Coords transform = translateIntoView(&(entity[i].pos));
+
+        // don't render if behind the player or too far away
+        if (transform.y <= 0.1 || transform.y > MAX_SPRITE_DEPTH) {
+            continue;
+        }
+
+        int sprite_screen_x = (int)(HALF_WIDTH * (1.0 + transform.x / transform.y));
+        int sprite_screen_y = (int)(RENDER_HEIGHT / 2 + view_height * VIEW_SCALE_Y / transform.y);
+        uint8_t type = uid_get_type(entity[i].uid);
+
+        // don't try to render if outside of screen
+        if (sprite_screen_x < -HALF_WIDTH || sprite_screen_x > DISPLAY_WIDTH + HALF_WIDTH) {
+            continue;
+        }
+
+        switch (type) {
+            case E_ENEMY: {
+                uint8_t sprite;
+                if (entity[i].state == S_ALERT) {
+                    sprite = (millis() / 500) % 2;          // walking
+                } else if (entity[i].state == S_FIRING) {
+                    sprite = 2;                             // fireball
+                } else if (entity[i].state == S_HIT) {
+                    sprite = 3;                             // hit
+                } else if (entity[i].state == S_MELEE) {
+                    sprite = entity[i].timer > 10 ? 2 : 1;  // melee attack
+                } else if (entity[i].state == S_DEAD) {
+                    sprite = entity[i].timer > 0 ? 3 : 4;   // dying
+                } else {
+                    sprite = 0;                             // stand
+                }
+
+                drawSprite(
+                    sprite_screen_x - (int)(BMP_IMP_WIDTH * .5 * VIEW_SCALE_X / transform.y),
+                    sprite_screen_y - (int)(8 * VIEW_SCALE_Y / transform.y),
+                    bmp_imp_bits, bmp_imp_mask,
+                    BMP_IMP_WIDTH, BMP_IMP_HEIGHT,
+                    sprite, transform.y
+                );
+                break;
+            }
+
+            case E_FIREBALL:
+                drawSprite(
+                    sprite_screen_x - (int)(BMP_FIREBALL_WIDTH / 2 * VIEW_SCALE_X / transform.y),
+                    sprite_screen_y - (int)(BMP_FIREBALL_HEIGHT / 2 * VIEW_SCALE_Y / transform.y),
+                    bmp_fireball_bits, bmp_fireball_mask,
+                    BMP_FIREBALL_WIDTH, BMP_FIREBALL_HEIGHT,
+                    0, transform.y
+                );
+                break;
+
+            case E_MEDIKIT:
+                drawSprite(
+                    sprite_screen_x - (int)(BMP_ITEMS_WIDTH / 2 * VIEW_SCALE_X / transform.y),
+                    sprite_screen_y + (int)(5 * VIEW_SCALE_Y / transform.y),
+                    bmp_items_bits, bmp_items_mask,
+                    BMP_ITEMS_WIDTH, BMP_ITEMS_HEIGHT,
+                    0, transform.y
+                );
+                break;
+
+            case E_KEY:
+                drawSprite(
+                    sprite_screen_x - (int)(BMP_ITEMS_WIDTH / 2 * VIEW_SCALE_X / transform.y),
+                    sprite_screen_y + (int)(5 * VIEW_SCALE_Y / transform.y),
+                    bmp_items_bits, bmp_items_mask,
+                    BMP_ITEMS_WIDTH, BMP_ITEMS_HEIGHT,
+                    1, transform.y
+                );
+                break;
+        }
+    }
 }
 
 /**
- * Get the type of an entity from its UID
+ * Draw the player's gun, bobbing while walking.
  */
-EType uid_get_type(UID uid) {
-    return (uid >> 12) & 0xF;
+void renderGun(uint8_t gun_pos, double amount_jogging) {
+    int gun_w = BMP_GUN_WIDTH * GUN_SCALE;
+
+    // jogging
+    int x = (DISPLAY_WIDTH - gun_w) / 2
+            + (int)(sin((double) millis() * JOGGING_SPEED) * 10 * amount_jogging * VIEW_SCALE_X);
+    int y = RENDER_HEIGHT - (int)(gun_pos * VIEW_SCALE_Y)
+            + (int)(fabs(cos((double) millis() * JOGGING_SPEED)) * 8 * amount_jogging * VIEW_SCALE_Y);
+
+    if (gun_pos > GUN_SHOT_POS - 2) {
+        // Gun fire
+        drawBitmap(x + 6 * GUN_SCALE, y - 11 * GUN_SCALE,
+                   bmp_fire_bits, BMP_FIRE_WIDTH, BMP_FIRE_HEIGHT, GUN_SCALE, true);
+    }
+
+    // Draw the gun (black mask first, then the actual sprite)
+    drawBitmap(x, y, bmp_gun_mask, BMP_GUN_WIDTH, BMP_GUN_HEIGHT, GUN_SCALE, false);
+    drawBitmap(x, y, bmp_gun_bits, BMP_GUN_WIDTH, BMP_GUN_HEIGHT, GUN_SCALE, true);
 }
 
 /**
- * Update and display the HUD
+ * Draw the static parts of the hud. Only needed once per game.
+ */
+void renderHud(void) {
+    int y = RENDER_HEIGHT + 8;
+
+    drawText(4, y, "{}", 0);                        // Health symbol
+    drawText(4 + 40 * TEXT_SCALE, y, "[]", 0);      // Keys symbol
+    updateHud();
+}
+
+/**
+ * Redraw the changing hud values.
  */
 void updateHud(void) {
-    // Simple HUD - just show health
-    gfx_SetTextXY(10, 10);
-    gfx_SetTextScale(1, 1);
-    char buffer[32];
-    sprintf(buffer, "Health: %d", player.health);
-    gfx_PrintString(buffer);
-    
-    sprintf(buffer, "Keys: %d", player.keys);
-    gfx_SetTextXY(10, 25);
-    gfx_PrintString(buffer);
+    int y = RENDER_HEIGHT + 8;
+    int health_x = 4 + 12 * TEXT_SCALE;
+    int keys_x = 4 + 52 * TEXT_SCALE;
+
+    clearRect(health_x, y, 20 * TEXT_SCALE, CHAR_HEIGHT * TEXT_SCALE);
+    clearRect(keys_x, y, 8 * TEXT_SCALE, CHAR_HEIGHT * TEXT_SCALE);
+
+    drawTextNum(health_x, y, player.health);
+    drawTextNum(keys_x, y, player.keys);
+}
+
+/**
+ * Debug readout: fps, live entity count and player position.
+ * Ported from renderStats() in the original. Built by `make debug`.
+ */
+void renderStats(void) {
+#if DEBUG
+    char buffer[40];
+    int y = RENDER_HEIGHT + 8;
+    int x = DISPLAY_WIDTH / 2;
+
+    clearRect(x, y, DISPLAY_WIDTH - x, CHAR_HEIGHT * TEXT_SCALE);
+    sprintf(buffer, "FPS %d E %d", (int) getActualFps(), num_entities);
+    drawText(x, y, buffer, 0);
+#endif
+}
+
+/**
+ * Intro screen: logo, then wait for fire.
+ */
+void loopIntro(void) {
+    int logo_scale = 3;
+    int logo_w = BMP_LOGO_WIDTH * logo_scale;
+    int logo_h = BMP_LOGO_HEIGHT * logo_scale;
+
+    gfx_FillScreen(0);
+    drawBitmap((DISPLAY_WIDTH - logo_w) / 2, (DISPLAY_HEIGHT - logo_h) / 3,
+               bmp_logo_bits, BMP_LOGO_WIDTH, BMP_LOGO_HEIGHT, logo_scale, true);
+    setFade(255);
+    gfx_BlitBuffer();
+
+    delay(1000);
+
+    drawText(DISPLAY_WIDTH / 2 - 25 * TEXT_SCALE, (int)(DISPLAY_HEIGHT * .8), "PRESS FIRE", 1);
+    gfx_BlitBuffer();
+
+    // wait for fire
+    while (!exit_scene) {
+        input_setup();
+        if (input_quit()) {
+            quit_game = true;
+            exit_scene = true;
+            return;
+        }
+        if (input_fire()) jumpTo(GAME_PLAY);
+    }
+}
+
+/**
+ * The game itself.
+ * Ported from loopGamePlay() in docs/doom-nano/doom-nano.ino.
+ */
+void loopGamePlay(void) {
+    bool gun_fired = false;
+    uint8_t gun_pos = 0;
+    double rot_speed;
+    double old_dir_x;
+    double old_plane_x;
+    double view_height = 0;
+    double jogging = 0;
+    uint8_t fade = 0;
+
+    initializeLevel(level_data);
+
+    num_entities = 0;
+    num_static_entities = 0;
+
+    // Clear both buffers once; from here renderMap only repaints the viewport
+    gfx_FillScreen(0);
+    gfx_SwapDraw();
+    gfx_FillScreen(0);
+
+    do {
+        fps();
+
+        // Read the keypad once; the input_* predicates below share that scan
+        input_setup();
+
+        // If the player is alive
+        if (player.health > 0) {
+            // Player speed
+            if (input_up()) {
+                player.velocity += (MOV_SPEED - player.velocity) * .4;
+                jogging = fabs(player.velocity) * MOV_SPEED_INV;
+            } else if (input_down()) {
+                player.velocity += (-MOV_SPEED - player.velocity) * .4;
+                jogging = fabs(player.velocity) * MOV_SPEED_INV;
+            } else {
+                player.velocity *= .5;
+                jogging = fabs(player.velocity) * MOV_SPEED_INV;
+            }
+
+            // Player rotation
+            if (input_right()) {
+                rot_speed = ROT_SPEED * delta;
+                old_dir_x = player.dir.x;
+                player.dir.x = player.dir.x * cos(-rot_speed) - player.dir.y * sin(-rot_speed);
+                player.dir.y = old_dir_x * sin(-rot_speed) + player.dir.y * cos(-rot_speed);
+                old_plane_x = player.plane.x;
+                player.plane.x = player.plane.x * cos(-rot_speed) - player.plane.y * sin(-rot_speed);
+                player.plane.y = old_plane_x * sin(-rot_speed) + player.plane.y * cos(-rot_speed);
+            } else if (input_left()) {
+                rot_speed = ROT_SPEED * delta;
+                old_dir_x = player.dir.x;
+                player.dir.x = player.dir.x * cos(rot_speed) - player.dir.y * sin(rot_speed);
+                player.dir.y = old_dir_x * sin(rot_speed) + player.dir.y * cos(rot_speed);
+                old_plane_x = player.plane.x;
+                player.plane.x = player.plane.x * cos(rot_speed) - player.plane.y * sin(rot_speed);
+                player.plane.y = old_plane_x * sin(rot_speed) + player.plane.y * cos(rot_speed);
+            }
+
+            view_height = fabs(sin((double) millis() * JOGGING_SPEED)) * 6 * jogging;
+
+            // Update gun
+            if (gun_pos > GUN_TARGET_POS) {
+                // Right after fire
+                gun_pos -= 1;
+            } else if (gun_pos < GUN_TARGET_POS) {
+                // Showing up
+                gun_pos += 2;
+            } else if (!gun_fired && input_fire()) {
+                // ready to fire and fire pressed
+                gun_pos = GUN_SHOT_POS;
+                gun_fired = true;
+                fire();
+            } else if (gun_fired && !input_fire()) {
+                // just fired and restored position
+                gun_fired = false;
+            }
+        } else {
+            // The player is dead
+            if (view_height > -10) view_height--;
+            else if (input_fire()) jumpTo(INTRO);
+
+            if (gun_pos > 1) gun_pos -= 2;
+        }
+
+        // Player movement
+        if (fabs(player.velocity) > 0.003) {
+            updatePosition(
+                level_data,
+                &(player.pos),
+                player.dir.x * player.velocity * delta,
+                player.dir.y * player.velocity * delta,
+                false
+            );
+        } else {
+            player.velocity = 0;
+        }
+
+        // Update things
+        updateEntities(level_data);
+
+        // Render stuff
+        renderMap(level_data, view_height);
+        renderEntities(view_height);
+        renderGun(gun_pos, jogging);
+
+        // Fade in effect
+        if (fade < FADE_STEPS) {
+            setFade(255 * fade / (FADE_STEPS - 1));
+            fade++;
+
+        } else {
+            // Redrawn every frame: the screen is double buffered, so drawing
+            // the hud once would only ever reach one of the two buffers.
+            renderHud();
+            renderStats();
+        }
+
+        // flash screen
+        if (flash_screen > 0) {
+            invert_screen = !invert_screen;
+            flash_screen--;
+            setInvert(invert_screen);
+        } else if (invert_screen) {
+            invert_screen = false;
+            setInvert(false);
+        }
+
+        // Draw the frame
+        gfx_SwapDraw();
+
+        // Exit routine
+        if (input_quit()) {
+            quit_game = true;
+            exit_scene = true;
+            return;
+        }
+        if (input_left() && input_right()) {
+            jumpTo(INTRO);
+        }
+    } while (!exit_scene);
 }
 
 /**
  * Main program entry point
  */
 int main(void) {
-    // Initialize the game
     setup();
-    
-    // Start the main game loop
-    loop();
-    
-    // Clean up
+
+    // Run scenes until the player quits with [clear]
+    while (!quit_game) {
+        loop();
+    }
+
     gfx_End();
-    
+
     return 0;
 }
