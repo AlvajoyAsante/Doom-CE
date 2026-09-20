@@ -1,5 +1,13 @@
-.vscode
+# Editor config: share the build tasks, keep machine specific paths out
+.vscode/
 
+*/doom-nano
+.claude/
+/test/ti84pce.rom
+
+# CE toolchain build output
+bin/
+obj/
 
 CMakeLists.txt.user
 CMakeCache.txt
@@ -7,6 +15,7 @@ CMakeFiles
 CMakeScripts
 Testing
 Makefile
+!/Makefile
 cmake_install.cmake
 install_manifest.txt
 compile_commands.json
