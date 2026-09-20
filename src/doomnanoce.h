@@ -200,7 +200,7 @@ void drawPixel(int x, int y, bool color, bool raycasterViewport);
 void drawVLine(int x, int start_y, int end_y, uint8_t intensity);
 void drawColumn(int x, int start_y, int end_y, uint8_t intensity);
 void drawSprite(int x, int y, const uint8_t bitmap[], const uint8_t mask[], int16_t w, int16_t h, uint8_t sprite, double distance);
-void drawBitmap(int x, int y, const uint8_t bitmap[], int16_t w, int16_t h, uint8_t scale, bool color);
+void drawBitmap(int x, int y, const uint8_t bitmap[], int16_t w, int16_t h, uint8_t scale, bool color, int clip_bottom);
 void drawChar(int x, int y, char ch);
 void drawText(int x, int y, const char *txt, uint8_t space);
 void drawTextNum(int x, int y, uint8_t num);

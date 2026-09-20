@@ -5,7 +5,7 @@
     "ROM in test/. The emulator boots and the keypad works, but no program runs,",
     "so every build hashes the same home screen. Do not trust a pass here until",
     "that is fixed - see test/README.md. The expected CRCs below are therefore",
-    "placeholders, not recorded values."
+    "the sentinel 00000000, not recorded values."
   ],
   "rom": "test/ti84pce.rom",
   "transfer_files":
@@ -37,14 +37,14 @@
       "description": "Gameplay frame: raycast walls plus health/keys hud",
       "start": "vram_start",
       "size": "vram_8_size",
-      "expected_CRCs": [ "PLACEHOLDER" ]
+      "expected_CRCs": [ "00000000" ]
     },
     "2":
     {
       "description": "[clear] quits the game and returns a responsive OS home screen",
       "start": "vram_start",
       "size": "vram_16_size",
-      "expected_CRCs": [ "PLACEHOLDER" ]
+      "expected_CRCs": [ "00000000" ]
     }
   }
 }

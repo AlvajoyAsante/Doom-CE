@@ -2,170 +2,182 @@
   <img src="docs/title_image.png" alt="Doom Nano CE" width="30%">
 </div>
 
-# Doom Nano CE
+# Doom CE
 
 A port of [Doom Nano](https://github.com/daveruiz/doom-nano/) to the TI-84 Plus CE.
 
-## Overview
+Doom Nano is a raycasting engine written by **daveruiz** for the Arduino — a
+128x64 monochrome OLED driven by an ATmega328. This port moves it to the
+TI-84 Plus CE's 320x240 color screen and eZ80 CPU, following the original
+sources closely rather than rewriting the game.
 
-Doom Nano CE is a lightweight 3D raycasting game adapted from the original Doom Nano project, which was designed for Arduino hardware.
+> **Note:** this is not id Software's *Doom*. It is an original game inspired
+> by Doom and by Wolfenstein 3D style raycasting.
 
-> **Note:** This is not the original *Doom* game. It is an original raycasting game inspired by Doom and classic Wolfenstein 3D-style rendering.
+<div align="center">
+  <img src="docs/demo3.png" alt="In-game screenshot" width="60%">
+</div>
 
-## Features
+## Status
 
-- 3D raycasting engine
-- Interactive environments
-- Sprite-based enemies
-- Collectible items and keys
-- Collision detection
-- Custom text rendering
-- Optimized for the TI-84 Plus CE
+Playable. The engine, the level and the entity logic are all ported and
+running on hardware.
 
-## Requirements
+**Working**
 
-### Hardware
+- Raycasting renderer with distance shading
+- The original 64x57 level, decoded from the same packed 4-bit map data
+- Enemies, fireballs, medikits and keys: spawning, AI states, collision
+- Depth-sorted enemy sprites, occluded correctly by walls via the z-buffer
+- Player gun with walk bob and muzzle flash
+- Title screen, HUD, damage flash, death and return to title
+- All of the original sprite art and its 4x6 font
 
-- TI-84 Plus CE
+**Not working / not present**
 
-### Development
+- **Sound.** The original drives a piezo buzzer from an Arduino pin. The
+  TI-84 Plus CE has no speaker, so there is nothing to port it onto.
+- **Automated tests.** The test harness is written but cannot launch programs
+  on the ROM currently used; see [`test/README.md`](test/README.md).
+- **Doors, locked doors and the exit tile are inert.** They exist as block
+  types in the map data, but the original never renders or acts on them
+  either, so there is no level completion to port.
 
-- [CEdev](https://github.com/CE-Programming/toolchain)
-- [CEmu](https://github.com/CE-Programming/CEmu)
+## Installing
 
-## Building
+Two things have to be on the calculator:
 
-```bash
-make
-```
+1. **The CE C libraries.** This program links `graphx` and `keypadc`
+   dynamically, so it will not start without them. Download `clibs.8xg` from
+   the [CE-Programming libraries releases](https://github.com/CE-Programming/libraries/releases)
+   and send it across — you only ever need to do this once per calculator.
+2. **The game**, `bin/DOOM.8xp` (about 27 KB).
 
-Debug build:
+Transfer both with [TI Connect CE](https://education.ti.com/en/products/computer-software/ti-connect-ce-sw),
+then run `prgmDOOM` from the program menu.
 
-```bash
-make debug
-```
-
-Or, to clean, build and run the emulator tests in one go:
-
-```bash
-./build.sh
-```
-
-The build produces:
-
-```text
-bin/DOOM.8xp
-```
-
-## Testing
-
-Automated tests run the built program inside the headless CEmu core and check
-CRCs of the calculator's screen:
-
-```bash
-make test
-```
-
-`make test` builds first, so it always tests the current sources. You need to
-supply your own calculator ROM at `test/ti84pce.rom` — see
-[`test/README.md`](test/README.md) for that and for how to refresh the expected
-hashes after a rendering change.
-
-## Running
-
-### Calculator
-
-Transfer `bin/DOOM.8xp` to your calculator using TI Connect CE and run it from the program menu.
-
-### CEmu
-
-Launch CEmu and send `bin/DOOM.8xp` to the emulated calculator, then run it from
-the program menu.
+To run it under [CEmu](https://github.com/CE-Programming/CEmu) instead, send
+the same two files to the emulated calculator.
 
 ## Controls
 
 | Button | Action |
 |--------|--------|
+| `2nd` | Start the game from the title screen, and fire |
 | `up` / `down` | Move forward / backward |
 | `left` / `right` | Turn |
-| `2nd` | Fire, and start the game from the title screen |
 | `left` + `right` | Return to the title screen |
 | `clear` | Quit to the OS |
 
-## Project Structure
+## Building
 
-```text
-DoomNanoCE/
-├── src/            # Source code (including config.h)
-├── include/        # Header files
-├── docs/
-│   └── doom-nano/  # The original Arduino sources this port follows
-├── test/           # CEmu autotest support and ROM location
-├── Makefile
-├── autotest.json   # CEmu autotester definition
-└── build.sh
+Requires the [CE C toolchain](https://github.com/CE-Programming/toolchain) on
+your `PATH`.
+
+```bash
+make            # release build -> bin/DOOM.8xp
+make debug      # adds an on-screen fps / entity count readout
+make clean
 ```
 
-The Arduino original under [`docs/doom-nano/`](docs/doom-nano/) is the reference
-for this port — when a subsystem is ported, that is the source of truth for how
-it should behave.
+`./build.sh` cleans, builds and then runs the emulator tests; pass
+`--no-test` to skip them.
 
-## Development Status
+VS Code users get **Build**, **Rebuild**, **Build (debug)** and **Test on
+CEmu** tasks, with `Build` bound to the default build task.
 
-### Completed
+## Testing
 
-- [x] Builds for the TI-84 Plus CE
-- [x] Keypad input and clean exit to the OS
-- [x] Level data and packed 4-bit map decoding
-- [x] Raycasting renderer
-- [x] Entity model, spawning and collision detection
-- [x] Enemy AI, fireballs and pickups
-- [x] All sprite art ported (font, logo, gun, muzzle flash, enemy, fireball, items)
-- [x] Entity rendering: depth sorted billboards, occluded by the zbuffer
-- [x] Gun rendering with walk bob and muzzle flash
-- [x] Text rendering using the original 4x6 font sheet
-- [x] Title screen, hud, death and return to title
-- [x] Fade in/out and damage flash
+```bash
+make test       # builds first, then runs the CEmu autotester
+```
 
-### Not implemented
+There are two kinds of test:
 
-- [ ] Sound. The original drives a piezo buzzer from an Arduino pin; the
-      TI-84 Plus CE has no speaker, so there is nothing to port it onto.
-- [ ] Automated CEmu tests. The harness cannot launch programs on the ROM in
-      `test/`, see [`test/README.md`](test/README.md).
-- [ ] Performance work. The sprite and bitmap blitters are per-pixel and the
-      frame rate suffers for it; correctness first, speed later.
+- **Emulator tests** (`autotest.json`) run the built program inside the
+  headless CEmu core and compare CRCs of the screen. These currently cannot
+  pass — `action|launch` does not start the program on the ROM in `test/`.
+  The diagnosis is written up in [`test/README.md`](test/README.md).
+- **Fixed-point verification** (`test/verify-fixed-point.py`) needs no ROM or
+  emulator. It replays both the old `double` raycaster and the current fixed
+  point one in Python, with C semantics, over the real level data and checks
+  they agree and that nothing overflows.
 
-## Known Limitations
+## How the port works
 
-- Doors, locked doors and the exit tile are inert. They are block types in the
-  map data but the original never renders or acts on them either, so this port
-  matches that behaviour.
-- The viewport is 320x200 where the original is 128x56. Walls and sprites are
-  magnified consistently, but the aspect is taller than the original's; set
-  `RENDER_HEIGHT` to 140 in `src/doomnanoce.h` for a proportionally faithful
-  view with a larger hud area.
-- Shading uses a 256 level grayscale palette instead of the original's dither
-  patterns, and fades are done by dimming that palette rather than by
-  dissolving pixels.
+[`docs/doom-nano/`](docs/doom-nano/) holds the original Arduino sources. They
+are the reference: when a subsystem is ported, that is the source of truth for
+how it should behave.
+
+```text
+src/
+├── main.c          Game loop, scenes, entity logic, sprite and gun rendering
+├── display.c       Raycaster, blitters, font, palette
+├── level.c         Packed level data and the 4-bit map decoder
+├── sprites.c       1bpp sprite art, lifted verbatim from the original
+├── fixed.h         Fixed point maths for the raycaster
+├── doomnanoce.h    Shared constants, types and prototypes
+└── config.h        Build and hardware configuration
+```
+
+A few structural notes for anyone reading the code:
+
+- **The screen is 2.5x wider and 3.6x taller than the original's viewport.**
+  `VIEW_SCALE_X` and `VIEW_SCALE_Y` in `src/doomnanoce.h` carry the original's
+  128x56 coordinates onto this screen, and sprites use the same factors so
+  they stay lined up with the walls.
+- **Shading replaces dithering.** The original faked brightness on a 1bpp
+  panel with dither patterns. Here `setupDisplay()` installs a 256-entry
+  grayscale palette, so a color index *is* a brightness, and fades are done
+  by dimming the palette rather than dissolving pixels.
+- **The raycaster owns the viewport.** `drawColumn` paints ceiling, wall and
+  floor for every column, so there is no separate clear pass. Anything drawn
+  below `RENDER_HEIGHT` would therefore never be erased — which is why the
+  gun clips against it.
+
+## Performance
+
+The eZ80 has no FPU and runs at 48 MHz, so the original's `double` arithmetic
+was the first thing to go. Three rounds of work, following the approach in
+[CodePenguino/TI-84-CE-Wolfenstein](https://github.com/CodePenguino/TI-84-CE-Wolfenstein):
+
+- **Fixed point maths.** The raycaster's inner loop used software floating
+  point for every DDA step. It now uses 11 fractional bits over the eZ80's
+  native 24-bit `int` (`src/fixed.h`). The precision was chosen by measuring:
+  at 11 bits every column agrees with the old `double` version to within one
+  pixel, 12 bits overflows, 8 bits visibly stair-steps.
+- **Direct framebuffer writes.** Drawing goes straight into `gfx_vbuffer`
+  instead of through per-pixel library calls, and painting full columns
+  removed a 64,000 byte screen wipe from every frame.
+- **Source-space sprite blitting.** `drawSprite` used to walk the screen and
+  divide twice per pixel to find the source texel, so an enemy at point blank
+  range cost 64,000 iterations and 128,000 divides. It now walks the source
+  art — at most 32x32 however close the enemy gets — and coalesces runs of
+  equal texels into one `memset` per row. The gun, redrawn every frame, went
+  from 2,943 `memset` calls to 507.
+
+Still on the table: unrolling the wall column writes, and the LCD register
+trick that stretches a 160-pixel-wide framebuffer across the full panel, which
+would halve the fill cost outright.
+
+## Differences from the original
+
+- The viewport is 320x200 against the original's 128x56, so the view is
+  proportionally taller. Set `RENDER_HEIGHT` to 140 in `src/doomnanoce.h` for
+  the original's aspect ratio and a larger HUD area.
+- Enemies only exist within about 10 cells and in line of sight, and are
+  deleted and respawned as you move — this is the original's behavior, and it
+  means only one to three of the map's 22 enemies are live at once.
+- Shading and fades use the grayscale palette described above.
+- `[clear]` quits to the OS. The Arduino original simply runs forever.
 
 ## Credits
 
-- **daveruiz** - Original Doom Nano project
-- **lodev.org** - Raycasting resources
-- **CEdev Team** - TI-84 Plus CE toolchain
-- **TI-84 Plus CE community** - Development resources and testing
+- **[daveruiz](https://github.com/daveruiz/doom-nano/)** — the original Doom Nano
+- **[lodev.org](https://lodev.org/cgtutor/raycasting.html)** — raycasting reference
+- **[CE-Programming](https://github.com/CE-Programming/toolchain)** — the TI-84 Plus CE toolchain
+- **[CodePenguino](https://github.com/CodePenguino/TI-84-CE-Wolfenstein)** — eZ80 raycaster optimization techniques
 
 ## License
 
-See [`LICENSE`](LICENSE) for licensing information.
-
----
-
-<div align="center">
-
-**Doom Nano CE**
-
-*A lightweight 3D raycasting game for the TI-84 Plus CE.*
-
-</div>
+See [`LICENSE`](LICENSE).

@@ -631,21 +631,25 @@ void renderEntities(double view_height) {
 void renderGun(uint8_t gun_pos, double amount_jogging) {
     int gun_w = BMP_GUN_WIDTH * GUN_SCALE;
 
-    // jogging
+    // Everything here is in gun sprite space, so all of it scales by
+    // GUN_SCALE rather than the viewport scale. That keeps the fraction of
+    // the gun poking above the hud the same as in the original.
     int x = (DISPLAY_WIDTH - gun_w) / 2
-            + (int)(sin((double) millis() * JOGGING_SPEED) * 10 * amount_jogging * VIEW_SCALE_X);
-    int y = RENDER_HEIGHT - (int)(gun_pos * VIEW_SCALE_Y)
-            + (int)(fabs(cos((double) millis() * JOGGING_SPEED)) * 8 * amount_jogging * VIEW_SCALE_Y);
+            + (int)(sin((double) millis() * JOGGING_SPEED) * 10 * amount_jogging * GUN_SCALE);
+    int y = RENDER_HEIGHT - gun_pos * GUN_SCALE
+            + (int)(fabs(cos((double) millis() * JOGGING_SPEED)) * 8 * amount_jogging * GUN_SCALE);
 
     if (gun_pos > GUN_SHOT_POS - 2) {
         // Gun fire
         drawBitmap(x + 6 * GUN_SCALE, y - 11 * GUN_SCALE,
-                   bmp_fire_bits, BMP_FIRE_WIDTH, BMP_FIRE_HEIGHT, GUN_SCALE, true);
+                   bmp_fire_bits, BMP_FIRE_WIDTH, BMP_FIRE_HEIGHT, GUN_SCALE, true, RENDER_HEIGHT);
     }
 
-    // Draw the gun (black mask first, then the actual sprite)
-    drawBitmap(x, y, bmp_gun_mask, BMP_GUN_WIDTH, BMP_GUN_HEIGHT, GUN_SCALE, false);
-    drawBitmap(x, y, bmp_gun_bits, BMP_GUN_WIDTH, BMP_GUN_HEIGHT, GUN_SCALE, true);
+    // Don't draw over the hud! renderMap only repaints the viewport, so
+    // anything spilling past RENDER_HEIGHT would stay on screen frame after
+    // frame - which showed up as a stack of hands while the gun rises.
+    drawBitmap(x, y, bmp_gun_mask, BMP_GUN_WIDTH, BMP_GUN_HEIGHT, GUN_SCALE, false, RENDER_HEIGHT);
+    drawBitmap(x, y, bmp_gun_bits, BMP_GUN_WIDTH, BMP_GUN_HEIGHT, GUN_SCALE, true, RENDER_HEIGHT);
 }
 
 /**
@@ -700,7 +704,7 @@ void loopIntro(void) {
 
     gfx_FillScreen(0);
     drawBitmap((DISPLAY_WIDTH - logo_w) / 2, (DISPLAY_HEIGHT - logo_h) / 3,
-               bmp_logo_bits, BMP_LOGO_WIDTH, BMP_LOGO_HEIGHT, logo_scale, true);
+               bmp_logo_bits, BMP_LOGO_WIDTH, BMP_LOGO_HEIGHT, logo_scale, true, DISPLAY_HEIGHT);
     setFade(255);
     gfx_BlitBuffer();
 
