@@ -1,8 +1,9 @@
 # Tests
 
-Automated tests run the built `.8xp` inside the headless CEmu core
-(`cemu-autotester`, shipped with CEdev) and compare CRCs of the calculator's
-VRAM against expected values. The test definition lives in
+Two things live here. `verify-fixed-point.py` checks the raycaster's maths and
+needs nothing but Python. The emulator tests run the built `.8xp` inside the
+headless CEmu core (`cemu-autotester`, shipped with CEdev) and compare CRCs of
+the calculator's VRAM against expected values; their definition lives in
 [`../autotest.json`](../autotest.json).
 
 ## Running
@@ -14,6 +15,27 @@ make test
 `test` depends on `build`, so this always tests the current sources. `./build.sh`
 also runs the tests after a successful build, and skips them with a notice if no
 ROM is present.
+
+## Fixed point verification
+
+`verify-fixed-point.py` does not need a ROM or an emulator. The raycaster's
+maths was converted from `double` to 8.11 fixed point for speed, and this
+script replays both versions in Python with C semantics (24-bit wraparound,
+truncating division, arithmetic shift) over the real level data, sweeping the
+camera through a full turn from several positions.
+
+```bash
+python test/verify-fixed-point.py
+```
+
+It fails if any intermediate would overflow 24 or 32 bits, or if the two
+implementations disagree by more than a pixel anywhere the DDA decision was
+not already ambiguous. It reads `FIX_SHIFT` from `src/fixed.h` and the delta
+clamp from `src/display.c`, so re-run it after touching either.
+
+Current result: 53118 columns compared, 99.98% within one pixel, no overflow,
+and every larger disagreement is a ray passing through a cell corner where the
+tie-break is arbitrary.
 
 ## The ROM
 
@@ -49,9 +71,13 @@ screen with `[clear]` before launching change nothing.
 
 Most likely cause is a mismatch between this 2020 OS 5.3.0 dump and the launch
 mechanism in the current autotester build. The next thing to try is a different
-ROM version. Until then the `expected_CRCs` in `autotest.json` are the string
-`PLACEHOLDER`, so the tests fail loudly rather than reporting a meaningless
-pass; `./build.sh --no-test` skips them.
+ROM version. Until then the `expected_CRCs` in `autotest.json` are the sentinel
+`00000000`, so the tests fail loudly rather than reporting a meaningless pass;
+`./build.sh --no-test` skips them.
+
+Note that `autotest.json` has to sit in the repo root: the toolchain's `test`
+target runs the autotester against `$(CURDIR)/autotest.json`, and the paths
+inside it are relative to that directory.
 
 ## What is tested
 

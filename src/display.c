@@ -1,5 +1,6 @@
 #include "display.h"
 #include "sprites.h"
+#include "fixed.h"
 
 // Color indices into the grayscale palette installed by setupDisplay().
 #define COLOR_BLACK 0
@@ -28,9 +29,12 @@ void setupDisplay(void) {
 
 /**
  * Render the game map using raycasting algorithm.
- * Ported from renderMap() in docs/doom-nano/doom-nano.ino. The original
- * dithered a 1bpp display to fake shading; here distance maps straight onto
- * the grayscale palette installed by setupDisplay().
+ * Ported from renderMap() in docs/doom-nano/doom-nano.ino, with the maths
+ * moved to 8.8 fixed point: the ez80 has no FPU, so the doubles this used to
+ * use turned every DDA step into a pair of software float calls.
+ *
+ * Shading maps distance straight onto the grayscale palette installed by
+ * setupDisplay(), where the 1bpp original had to dither.
  */
 void renderMap(const uint8_t level[], double view_height) {
     UID last_uid = 0;
@@ -38,35 +42,55 @@ void renderMap(const uint8_t level[], double view_height) {
     // No clear here: drawColumn() paints ceiling, wall and floor for every
     // column, so the whole viewport is written exactly once per frame.
 
-    for (int x = 0; x < DISPLAY_WIDTH; x += RES_DIVIDER) {
-        double camera_x = 2 * (double) x / DISPLAY_WIDTH - 1;
-        double ray_x = player.dir.x + player.plane.x * camera_x;
-        double ray_y = player.dir.y + player.plane.y * camera_x;
-        uint8_t map_x = (uint8_t) player.pos.x;
-        uint8_t map_y = (uint8_t) player.pos.y;
-        Coords map_coords = { player.pos.x, player.pos.y };
-        double delta_x = fabs(1 / ray_x);
-        double delta_y = fabs(1 / ray_y);
+    // Camera state converted once per frame rather than once per column
+    fixed pos_x   = dbl2fx(player.pos.x);
+    fixed pos_y   = dbl2fx(player.pos.y);
+    fixed dir_x   = dbl2fx(player.dir.x);
+    fixed dir_y   = dbl2fx(player.dir.y);
+    fixed plane_x = dbl2fx(player.plane.x);
+    fixed plane_y = dbl2fx(player.plane.y);
+    fixed bob     = dbl2fx(view_height * VIEW_SCALE_Y);
 
-        int8_t step_x;
-        int8_t step_y;
-        double side_x;
-        double side_y;
+    // A ray running nearly along an axis gives a huge 1/ray. Clamping keeps
+    // the running side distances inside 24 bits: the accumulator takes at
+    // most MAX_RENDER_DEPTH steps, and 13 * 64 cells still fits comfortably.
+    // The clamp must stay well above MAX_RENDER_DEPTH - clamping it down to
+    // 16 reorders the DDA and picks the wrong wall on grazing rays.
+    const fixed DELTA_MAX = int2fx(64);
+
+    for (int x = 0; x < DISPLAY_WIDTH; x += RES_DIVIDER) {
+        // camera_x = 2 * x / width - 1
+        fixed camera_x = (fixed)(((long) x << (FIX_SHIFT + 1)) / DISPLAY_WIDTH) - FIX_ONE;
+        fixed ray_x = dir_x + fxmul(plane_x, camera_x);
+        fixed ray_y = dir_y + fxmul(plane_y, camera_x);
+
+        uint8_t map_x = (uint8_t) fx2int(pos_x);
+        uint8_t map_y = (uint8_t) fx2int(pos_y);
+
+        fixed delta_x = fxabs(fxdiv(FIX_ONE, ray_x));
+        fixed delta_y = fxabs(fxdiv(FIX_ONE, ray_y));
+        if (delta_x > DELTA_MAX) delta_x = DELTA_MAX;
+        if (delta_y > DELTA_MAX) delta_y = DELTA_MAX;
+
+        int step_x;
+        int step_y;
+        fixed side_x;
+        fixed side_y;
 
         if (ray_x < 0) {
             step_x = -1;
-            side_x = (player.pos.x - map_x) * delta_x;
+            side_x = fxmul(pos_x - int2fx(map_x), delta_x);
         } else {
             step_x = 1;
-            side_x = (map_x + 1.0 - player.pos.x) * delta_x;
+            side_x = fxmul(int2fx(map_x) + FIX_ONE - pos_x, delta_x);
         }
 
         if (ray_y < 0) {
             step_y = -1;
-            side_y = (player.pos.y - map_y) * delta_y;
+            side_y = fxmul(pos_y - int2fx(map_y), delta_y);
         } else {
             step_y = 1;
-            side_y = (map_y + 1.0 - player.pos.y) * delta_y;
+            side_y = fxmul(int2fx(map_y) + FIX_ONE - pos_y, delta_y);
         }
 
         // Wall detection (DDA)
@@ -91,12 +115,15 @@ void renderMap(const uint8_t level[], double view_height) {
             } else if (block == E_ENEMY || (block & 0x08)) {
                 // Spawn entities as soon as they become visible. Same place as
                 // the original: scanning for them separately would cost a lot.
-                if (coords_distance(&(player.pos), &map_coords) < MAX_ENTITY_DISTANCE) {
-                    UID uid = create_uid(block, map_x, map_y);
-                    if (last_uid != uid && !isSpawned(uid)) {
-                        spawnEntity(block, map_x, map_y);
-                        last_uid = uid;
-                    }
+                //
+                // The original guards this with a distance check against a
+                // map_coords it initialises to the player position and never
+                // updates, so the check is always true. Reproduced by simply
+                // not having it, which also saves a square root per block.
+                UID uid = create_uid(block, map_x, map_y);
+                if (last_uid != uid && !isSpawned(uid)) {
+                    spawnEntity(block, map_x, map_y);
+                    last_uid = uid;
                 }
             }
 
@@ -104,54 +131,46 @@ void renderMap(const uint8_t level[], double view_height) {
         }
 
         if (hit) {
-            double distance;
+            fixed distance;
 
             if (side == false) {
-                distance = max(1, (map_x - player.pos.x + (1 - step_x) / 2) / ray_x);
+                distance = fxdiv(int2fx(map_x) - pos_x + int2fx((1 - step_x) / 2), ray_x);
             } else {
-                distance = max(1, (map_y - player.pos.y + (1 - step_y) / 2) / ray_y);
+                distance = fxdiv(int2fx(map_y) - pos_y + int2fx((1 - step_y) / 2), ray_y);
             }
 
+            if (distance < FIX_ONE) distance = FIX_ONE;
+            if (distance > int2fx(MAX_RENDER_DEPTH)) distance = int2fx(MAX_RENDER_DEPTH);
+
             // store zbuffer value for the column
-            zbuffer[x / Z_RES_DIVIDER] = (uint8_t) min(distance * DISTANCE_MULTIPLIER, 255);
+            int z = fx2int(fxmul(distance, int2fx(DISTANCE_MULTIPLIER)));
+            zbuffer[x / Z_RES_DIVIDER] = (uint8_t) min(z, 255);
 
             // rendered line height
-            int line_height = (int)(RENDER_HEIGHT / distance);
+            int line_height = fx2int(fxdiv(int2fx(RENDER_HEIGHT), distance));
 
             // Near walls are bright, far walls fade out. Walls facing along y
             // are darkened a step so corners stay readable, which is what the
             // original achieved by shifting two gradient levels.
-            int shade = 255 - (int)(distance / MAX_RENDER_DEPTH * 255.0);
+            int shade = 255 - (int)(((long) distance * 255) / (MAX_RENDER_DEPTH * FIX_ONE));
             if (side) shade -= 48;
             if (shade < 24) shade = 24;
             if (shade > 255) shade = 255;
 
-            // view_height is in the original's 56px viewport units
-            int bob = (int)(view_height * VIEW_SCALE_Y / distance);
+            int offset = fx2int(fxdiv(bob, distance));
 
             drawColumn(
                 x,
-                bob - line_height / 2 + RENDER_HEIGHT / 2,
-                bob + line_height / 2 + RENDER_HEIGHT / 2,
+                offset - line_height / 2 + RENDER_HEIGHT / 2,
+                offset + line_height / 2 + RENDER_HEIGHT / 2,
                 (uint8_t) shade
             );
         } else {
             // Nothing within render depth: still has to be painted, since
             // there is no separate clear pass any more.
             drawColumn(x, 0, 0, COLOR_BLACK);
+            zbuffer[x / Z_RES_DIVIDER] = 255;
         }
-    }
-}
-
-/**
- * Draw a single pixel on the screen
- */
-void drawPixel(int x, int y, bool color, bool raycasterViewport) {
-    // The raycaster may only draw inside its viewport; the hud owns the rest
-    int max_y = raycasterViewport ? RENDER_HEIGHT : DISPLAY_HEIGHT;
-
-    if (x >= 0 && x < DISPLAY_WIDTH && y >= 0 && y < max_y) {
-        gfx_vbuffer[y][x] = color ? COLOR_WHITE : COLOR_BLACK;
     }
 }
 
@@ -265,26 +284,41 @@ void clearRect(int x, int y, int w, int h) {
  * `color` picks whether set bits are drawn white or black, which is how the
  * gun composites its mask before its sprite.
  */
-void drawBitmap(int x, int y, const uint8_t bitmap[], int16_t w, int16_t h, uint8_t scale, bool color) {
+void drawBitmap(int x, int y, const uint8_t bitmap[], int16_t w, int16_t h, uint8_t scale, bool color, int clip_bottom) {
     int byte_width = (w + 7) / 8;
     uint8_t c = color ? COLOR_WHITE : COLOR_BLACK;
 
+    if (clip_bottom > DISPLAY_HEIGHT) clip_bottom = DISPLAY_HEIGHT;
+
     for (int16_t by = 0; by < h; by++) {
         int sy = y + by * scale;
-        if (sy + scale <= 0 || sy >= DISPLAY_HEIGHT) continue;
+        if (sy + scale <= 0 || sy >= clip_bottom) continue;
 
         // Clip the scaled pixel's rows once per source row
         int row0 = sy < 0 ? 0 : sy;
-        int row1 = sy + scale > DISPLAY_HEIGHT ? DISPLAY_HEIGHT : sy + scale;
+        int row1 = sy + scale > clip_bottom ? clip_bottom : sy + scale;
 
-        for (int16_t bx = 0; bx < w; bx++) {
-            if (!(bitmap[by * byte_width + bx / 8] & (0x80 >> (bx % 8)))) continue;
+        // Runs of set bits become a single wide fill per screen row
+        const uint8_t *bits = bitmap + by * byte_width;
+        int16_t bx = 0;
+        while (bx < w) {
+            if (!(bits[bx >> 3] & (0x80 >> (bx & 7)))) {
+                bx++;
+                continue;
+            }
 
-            int sx = x + bx * scale;
-            if (sx + scale <= 0 || sx >= DISPLAY_WIDTH) continue;
+            int16_t run = bx + 1;
+            while (run < w && (bits[run >> 3] & (0x80 >> (run & 7)))) {
+                run++;
+            }
 
-            int col0 = sx < 0 ? 0 : sx;
-            int col1 = sx + scale > DISPLAY_WIDTH ? DISPLAY_WIDTH : sx + scale;
+            int col0 = x + bx * scale;
+            int col1 = x + run * scale;
+            bx = run;
+
+            if (col1 <= 0 || col0 >= DISPLAY_WIDTH) continue;
+            if (col0 < 0) col0 = 0;
+            if (col1 > DISPLAY_WIDTH) col1 = DISPLAY_WIDTH;
 
             for (int row = row0; row < row1; row++) {
                 memset(&gfx_vbuffer[row][col0], c, (size_t)(col1 - col0));
@@ -298,14 +332,28 @@ void drawBitmap(int x, int y, const uint8_t bitmap[], int16_t w, int16_t h, uint
  * Ported from drawSprite() in docs/doom-nano/display.h. The source art is
  * 1bpp with a mask; a set mask bit means the pixel belongs to the sprite, so
  * black pixels inside the silhouette stay black rather than transparent.
+ *
+ * This walks the source art rather than the screen. Walking the screen needs
+ * a divide per pixel to find the source texel, and a point blank enemy covers
+ * the whole viewport - 64000 pixels and twice as many divides, which stalled
+ * the frame. The source is at most 32x32 however close the enemy gets, so the
+ * per-sprite work is now bounded and each texel becomes one clipped memset.
  */
 void drawSprite(int x, int y, const uint8_t bitmap[], const uint8_t mask[], int16_t w, int16_t h, uint8_t sprite, double distance) {
+    // Largest source sprite in the game is 32x32; the edge tables are sized
+    // for that with room to spare.
+    #define SPRITE_MAX_DIM 64
+    int xedge[SPRITE_MAX_DIM + 1];
+    int yedge[SPRITE_MAX_DIM + 1];
+
+    if (w <= 0 || h <= 0 || w > SPRITE_MAX_DIM || h > SPRITE_MAX_DIM) {
+        return;
+    }
+
     // On-screen size. The magnification keeps sprites consistent with the
     // walls, which the raycaster draws at RENDER_HEIGHT / distance.
     int tw = (int)(w * VIEW_SCALE_X / distance);
     int th = (int)(h * VIEW_SCALE_Y / distance);
-    int byte_width = w / 8;
-    unsigned int sprite_offset = byte_width * h * sprite;
 
     if (tw <= 0 || th <= 0) {
         return;
@@ -318,27 +366,73 @@ void drawSprite(int x, int y, const uint8_t bitmap[], const uint8_t mask[], int1
         return;
     }
 
-    // Clip once up front instead of testing every pixel
-    int ty0 = y < 0 ? -y : 0;
-    int ty1 = y + th > RENDER_HEIGHT ? RENDER_HEIGHT - y : th;
-    int tx0 = x < 0 ? -x : 0;
-    int tx1 = x + tw > DISPLAY_WIDTH ? DISPLAY_WIDTH - x : tw;
+    // Fully off screen?
+    if (x >= DISPLAY_WIDTH || x + tw <= 0 || y >= RENDER_HEIGHT || y + th <= 0) {
+        return;
+    }
 
-    for (int ty = ty0; ty < ty1; ty++) {
-        int sy = ty * h / th;   // the y from the sprite
+    int byte_width = w / 8;
+    unsigned int sprite_offset = byte_width * h * sprite;
+
+    // Screen edges of each source column and row. These are the only
+    // divisions left, and there are w + h of them rather than one per pixel.
+    for (int i = 0; i <= w; i++) {
+        xedge[i] = x + (int)((long) i * tw / w);
+    }
+    for (int j = 0; j <= h; j++) {
+        yedge[j] = y + (int)((long) j * th / h);
+    }
+
+    for (int sy = 0; sy < h; sy++) {
+        int row0 = yedge[sy];
+        int row1 = yedge[sy + 1];
+
+        if (row1 <= 0 || row0 >= RENDER_HEIGHT) continue;
+        if (row0 < 0) row0 = 0;
+        if (row1 > RENDER_HEIGHT) row1 = RENDER_HEIGHT;
+        if (row1 <= row0) continue;
+
         const uint8_t *bmp_row = bitmap + sprite_offset + sy * byte_width;
         const uint8_t *msk_row = mask + sprite_offset + sy * byte_width;
-        uint8_t *dst = &gfx_vbuffer[y + ty][x];
 
-        for (int tx = tx0; tx < tx1; tx++) {
-            int sx = tx * w / tw;   // the x from the sprite
+        // Coalesce neighbouring texels that are both visible and the same
+        // colour, so a solid band becomes one memset per screen row instead
+        // of one per texel.
+        int sx = 0;
+        while (sx < w) {
             uint8_t bit = 0x80 >> (sx & 7);
 
-            if (msk_row[sx / 8] & bit) {
-                dst[tx] = (bmp_row[sx / 8] & bit) ? COLOR_WHITE : COLOR_BLACK;
+            if (!(msk_row[sx >> 3] & bit)) {
+                sx++;
+                continue;
+            }
+
+            uint8_t c = (bmp_row[sx >> 3] & bit) ? COLOR_WHITE : COLOR_BLACK;
+            int run = sx + 1;
+            while (run < w) {
+                uint8_t rbit = 0x80 >> (run & 7);
+                if (!(msk_row[run >> 3] & rbit)) break;
+                uint8_t rc = (bmp_row[run >> 3] & rbit) ? COLOR_WHITE : COLOR_BLACK;
+                if (rc != c) break;
+                run++;
+            }
+
+            int col0 = xedge[sx];
+            int col1 = xedge[run];
+            sx = run;
+
+            if (col1 <= 0 || col0 >= DISPLAY_WIDTH) continue;
+            if (col0 < 0) col0 = 0;
+            if (col1 > DISPLAY_WIDTH) col1 = DISPLAY_WIDTH;
+            if (col1 <= col0) continue;
+
+            for (int row = row0; row < row1; row++) {
+                memset(&gfx_vbuffer[row][col0], c, (size_t)(col1 - col0));
             }
         }
     }
+
+    #undef SPRITE_MAX_DIM
 }
 
 /**
@@ -354,14 +448,27 @@ void drawChar(int x, int y, char ch) {
 
     uint8_t bOffset = c / 2;
 
-    gfx_SetColor(COLOR_WHITE);
     for (uint8_t line = 0; line < CHAR_HEIGHT; line++) {
         uint8_t b = bmp_font[line * BMP_FONT_WIDTH + bOffset];
+        int row0 = y + line * TEXT_SCALE;
+        int row1 = row0 + TEXT_SCALE;
+
+        if (row1 <= 0 || row0 >= DISPLAY_HEIGHT) continue;
+        if (row0 < 0) row0 = 0;
+        if (row1 > DISPLAY_HEIGHT) row1 = DISPLAY_HEIGHT;
 
         for (uint8_t n = 0; n < CHAR_WIDTH; n++) {
-            if (b & (0x80 >> ((c % 2 == 0 ? 0 : 4) + n))) {
-                gfx_FillRectangle(x + n * TEXT_SCALE, y + line * TEXT_SCALE,
-                                  TEXT_SCALE, TEXT_SCALE);
+            if (!(b & (0x80 >> ((c % 2 == 0 ? 0 : 4) + n)))) continue;
+
+            int col0 = x + n * TEXT_SCALE;
+            int col1 = col0 + TEXT_SCALE;
+
+            if (col1 <= 0 || col0 >= DISPLAY_WIDTH) continue;
+            if (col0 < 0) col0 = 0;
+            if (col1 > DISPLAY_WIDTH) col1 = DISPLAY_WIDTH;
+
+            for (int row = row0; row < row1; row++) {
+                memset(&gfx_vbuffer[row][col0], COLOR_WHITE, (size_t)(col1 - col0));
             }
         }
     }
