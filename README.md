@@ -1,66 +1,137 @@
-# DoomNanoCE
+<div align="center">
+  <img src="docs/title_image.png" alt="Doom Nano CE" width="50%">
+</div>
 
-A Doom port of the [https://github.com/daveruiz/doom-nano/](https://github.com/daveruiz/doom-nano/) to the TI-84+CE calculator using the CE Dev Chain.
+# Doom Nano CE
 
-## Project Status
+A port of [Doom Nano](https://github.com/daveruiz/doom-nano/) to the TI-84 Plus CE.
 
-This is an ongoing port of the Doom Nano 3D raycasting engine to the TI-84+CE calculator. The project is currently in early development stages with basic structure and functionality implemented.
+## Overview
 
-## Features Implemented
+Doom Nano CE is a lightweight 3D raycasting game adapted from the original Doom Nano project, which was designed for Arduino hardware.
 
-- Basic raycasting engine structure
-- Entity system (player, enemies, items)
-- Input handling for TI-84+CE keypad
-- Simple level rendering placeholder
-- Basic collision detection
-- Game loop and timing control
+> **Note:** This is not the original *Doom* game. It is an original raycasting game inspired by Doom and classic Wolfenstein 3D-style rendering.
 
-## Build Instructions
+## Features
 
-1. Make sure you have the CE Dev Chain installed
-2. Run `make` to build the project
-3. Use `make install` to install to your calculator
-4. Use `make emu` to run in CEmu emulator
+- 3D raycasting engine
+- Interactive environments
+- Sprite-based enemies
+- Collectible items and keys
+- Collision detection
+- Custom text rendering
+- Optimized for the TI-84 Plus CE
+
+## Requirements
+
+### Hardware
+
+- TI-84 Plus CE
+
+### Development
+
+- [CEdev](https://github.com/CE-Programming/toolchain)
+- [CEmu](https://github.com/CE-Programming/CEmu)
+
+## Building
+
+```bash
+make
+```
+
+Debug build:
+
+```bash
+make clean
+make CC_DEBUG="" LD_DEBUG=""
+```
+
+Or:
+
+```bash
+./build.sh
+```
+
+The build produces:
+
+```text
+Doom.8xp
+```
+
+## Running
+
+### Calculator
+
+Transfer `Doom.8xp` to your calculator using TI Connect CE and run it from the program menu.
+
+### CEmu
+
+```bash
+ceemu -run Doom.8xp
+```
+
+## Controls
+
+| Button | Action |
+|--------|--------|
+| Arrow Keys | Move / strafe |
+| Action Button | Interact |
+| `2nd` + `MODE` | Exit |
 
 ## Project Structure
 
-```
-.
-├── src/              # Source code files
-│   ├── main.c        # Main program entry point
-│   ├── doomnanoce.h  # Main header file
-│   ├── types.c       # Utility functions for coordinates and UIDs
-│   ├── entities.c    # Entity creation and management
-│   ├── input.c       # Input handling
-│   ├── level.c       # Level data and rendering
-│   ├── display.c     # Display and rendering functions
-│   └── config.h      # Configuration settings
-├── include/          # Include files (empty for now)
-├── docs/             # Documentation
-├── test/             # Test files (empty for now)
-└── Makefile          # Build configuration
+```text
+DoomNanoCE/
+├── src/         # Source code
+├── include/     # Header files
+├── docs/        # Documentation and assets
+├── test/        # Tests
+├── Makefile
+├── build.sh
+└── config.h
 ```
 
-## Development Notes
+## Development Status
 
-This project is based on the original Arduino Doom Nano implementation but adapted for TI-84+CE hardware constraints and the eZ80 processor architecture. Key differences include:
+### Completed
 
-- 24-bit addressing mode (ADL) instead of 8-bit AVR
-- Different graphics subsystem using graphx.h
-- Input handling via keypadc.h 
-- Memory management optimized for calculator's limited resources
+- [x] Raycasting engine
+- [x] Basic enemy AI
+- [x] Item collection
+- [x] Collision detection
+- [x] Custom text rendering
 
-## Next Steps
+### In Progress
 
-1. Implement full raycasting engine
-2. Add proper sprite rendering
-3. Implement sound system
-4. Create more complex levels
-5. Add enemy AI improvements
-6. Implement item collection and health systems
-7. Add proper collision detection
-8. Optimize performance for calculator hardware
+- [ ] Advanced enemy behavior
+- [ ] Doors and locks
+- [ ] Game over screen
+- [ ] Additional sprites
+
+## Known Limitations
+
+- Simplified enemy AI
+- Limited sprite variety
+- Limited graphical detail
+- Audio and music are not yet fully implemented
+
+## Credits
+
+- **daveruiz** - Original Doom Nano project
+- **lodev.org** - Raycasting resources
+- **CEdev Team** - TI-84 Plus CE toolchain
+- **TI-84 Plus CE community** - Development resources and testing
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+See [`LICENSE`](LICENSE) for licensing information.
+
+---
+
+<div align="center">
+
+**Doom Nano CE**
+
+*A lightweight 3D raycasting game for the TI-84 Plus CE.*
+
+</div>
