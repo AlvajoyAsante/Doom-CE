@@ -1,0 +1,50 @@
+{
+  "comment": [
+    "CEmu autotester config. Run with 'make test', which builds first.",
+    "KNOWN BROKEN: 'action|launch' does not start the program on the OS 5.3.0",
+    "ROM in test/. The emulator boots and the keypad works, but no program runs,",
+    "so every build hashes the same home screen. Do not trust a pass here until",
+    "that is fixed - see test/README.md. The expected CRCs below are therefore",
+    "placeholders, not recorded values."
+  ],
+  "rom": "test/ti84pce.rom",
+  "transfer_files":
+  [
+    "bin/DOOM.8xp"
+  ],
+  "target":
+  {
+    "name": "DOOM",
+    "isASM": true
+  },
+  "sequence":
+  [
+    "action|launch",
+    "delay|1500",
+    "hashWait|1",
+    "key|clear",
+    "delay|500",
+    "key|clear",
+    "delay|300",
+    "key|clear",
+    "delay|500",
+    "hashWait|2"
+  ],
+  "hashes":
+  {
+    "1":
+    {
+      "description": "Gameplay frame: raycast walls plus health/keys hud",
+      "start": "vram_start",
+      "size": "vram_8_size",
+      "expected_CRCs": [ "PLACEHOLDER" ]
+    },
+    "2":
+    {
+      "description": "[clear] quits the game and returns a responsive OS home screen",
+      "start": "vram_start",
+      "size": "vram_16_size",
+      "expected_CRCs": [ "PLACEHOLDER" ]
+    }
+  }
+}
